@@ -1,0 +1,158 @@
+---
+- hosts: all
+  become: yes
+
+  vars_files:
+    - vars.yml
+
+  pre_tasks:
+    - name: Update apt cache if needed.
+      apt: update_cache=yes cache_valid_time=3600
+
+  handlers:
+    - name: restart nginx
+      service: name=nginx state=restarted
+    
+    - name: restart php-fpm
+      service: name=php7.4-fpm state=restarted
+
+    - name: restart supervisor
+      service: name=supervisor state=restarted
+
+  tasks:
+    - name: Get software for apt repository management.
+      apt:
+        state: present
+        name:
+          - python3-apt
+          - python3-pycurl
+      
+    - name: Add ondrej repository for later versions of PHP.
+      apt_repository: repo='ppa:ondrej/php' update_cache=yes
+
+    - name: "Install Nginx, PostgreSQL, PHP, and other dependencies."
+      apt:
+        state: present
+        name:
+          - acl
+          - git
+          - nginx
+          - php7.4-common
+          - php7.4-fpm
+          - php7.4-cli
+          - php7.4-dev
+          - php7.4-gd
+          - php7.4-curl
+          - php7.4-json
+          - php7.4-opcache
+          - php7.4-xml
+          - php7.4-mbstring
+          - php7.4-pdo
+          - php7.4-mysql
+          - php7.4-intl
+          - php7.4-zip
+          - nodejs
+          - php-apcu
+          - libpcre3-dev
+          - python3-mysqldb
+          - python3-postgresql
+          - mysql-server
+          - mysql-client
+          - redis
+
+    - name: "Start Nginx, MySQL, PostgreSQL and PHP."
+      service: "name={{ item }} state=started enabled=yes"
+      with_items:
+        - nginx
+        - mysql
+        - php7.4-fpm
+
+    - name: Download Composer installer.
+      get_url:
+        url: https://getcomposer.org/installer
+        dest: /tmp/composer-installer.php
+        mode: 0755
+      
+    - name: Run Composer installer.
+      command: >
+        php composer-installer.php
+        chdir=/tmp
+        creates=/usr/local/bin/composer
+    
+    - name: Move Composer into globally-accessible location.
+      command: >
+        mv /tmp/composer.phar /usr/local/bin/composer
+        creates=/usr/local/bin/composer
+
+    - name: Add virtualhost config to nginx.
+      template:
+        src: "nginx/server.conf.j2"
+        dest: "/etc/nginx/sites-available/{{ app_domain }}.conf"
+        owner: root
+        group: root
+        mode: 0644
+      notify: restart nginx
+    
+    - name: Create new php-fpm pool.
+      template:
+        src: "php/pool.conf.j2"
+        dest: "/etc/php/7.4/fpm/pool.d/{{ app_name }}.conf"
+        owner: root
+        group: root
+        mode: 0644
+      notify: restart php-fpm
+
+    - name: Deploy from Git
+      git:
+        repo: "{{ app_repo }}"
+        dest: "{{ app_path }}"
+        force: yes
+
+    - name: Create user for app.
+      user:
+        name: "{{ app_user }}"
+        shell: /bin/bash
+        create_home: true
+        home: "{{ app_path }}"
+        groups: www-data
+        append: yes
+        password:
+    
+    - name: Copy file with owner and permissions
+      copy:
+        src: app.env
+        dest: "{{ app_path }}/.env"
+        owner: "{{ app_user }}"
+        group: "www-data"
+        mode: "0644"
+
+    - name: Recursively change ownership of a directory.
+      file:
+        path: "{{ app_path }}"
+        state: directory
+        recurse: yes
+        owner: "{{ app_user }}"
+        group: www-data
+      notify: 
+        - restart php-fpm
+        - restart supervisor
+    
+    - name: Composer install
+      community.general.composer:
+        command: install
+        working_dir: "{{ app_path }}"
+      become: yes
+      become_user: "{{ app_user }}"
+
+    - name: Run npm run dev
+      npm:
+        path: "{{ app_path }}"
+      become: yes
+      become_user: "{{ app_user }}"
+
+    - name: Run artisan migrate
+      shell: "php artisan migrate --force"
+      args:
+        chdir: "{{ app_path }}"
+      become: yes
+      become_user: "{{ app_user }}"

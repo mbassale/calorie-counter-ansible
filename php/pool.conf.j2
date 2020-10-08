@@ -1,0 +1,18 @@
+; Start a new pool named 'www'.
+; the variable $pool can be used in any directive and will be replaced by the
+; pool name ('www' here)
+[{{ app_name }}]
+
+user = {{ app_user }}
+group = {{ app_user }}
+listen = /run/php/php7.4-fpm-{{ app_name }}.sock
+listen.owner = www-data
+listen.group = www-data
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+php_admin_value[error_log] = /var/log/fpm-php.{{ app_name }}.log
+php_admin_flag[log_errors] = on
+php_admin_value[memory_limit] = 1024M
